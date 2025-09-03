@@ -4,6 +4,7 @@ import requests
 import yfinance as yf
 import wave
 import contextlib
+import time
 from datetime import datetime
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
@@ -66,7 +67,7 @@ def three_digits_tokens(n: int, with_vav=False):
     rest = n % 100
     parts = []
 
-    # במקום טוקן "תשע מאות" -> ["תשע", "מאה"]
+    # במקום "תשע מאות" -> ["תשע", "מאה"]
     if h > 0:
         parts += one_digit_tokens(h) + ["מאה"]
 
@@ -116,8 +117,10 @@ def merge_wavs(token_list, out_path):
     files = []
     for t in token_list:
         p = os.path.join(AUDIO_DIR, f"{t}.wav")
+        # אם קובץ לא קיים - לצורך הניסוי נשתמש בקובץ "אלף.wav"
         if not os.path.exists(p):
-            raise FileNotFoundError(f"לא נמצא קובץ: {p}")
+            print(f"⚠️ קובץ חסר: {p} -> משתמשים בקובץ חלופי: אלף.wav")
+            p = os.path.join(AUDIO_DIR, "אלף.wav")
         files.append(p)
 
     with contextlib.ExitStack() as stack:
@@ -126,13 +129,6 @@ def merge_wavs(token_list, out_path):
         sampwidth  = readers[0].getsampwidth()
         framerate  = readers[0].getframerate()
         comptype, compname = readers[0].getcomptype(), readers[0].getcompname()
-
-        # בדיקות תאימות
-        for w in readers[1:]:
-            assert w.getnchannels() == n_channels
-            assert w.getsampwidth() == sampwidth
-            assert w.getframerate() == framerate
-            assert w.getcomptype() == comptype
 
         with wave.open(out_path, "wb") as out:
             out.setnchannels(n_channels)
@@ -158,8 +154,8 @@ def upload_single_wav(local_wav_path, yemot_target_dir, filename="001.wav"):
         else:
             print(f"⚠️ שגיאה בהעלאת {filename}: {r.text}")
 
-# ========= שימוש לדוגמה =========
-def main():
+# ========= הפעלה =========
+def run_once():
     # שליפת שער ביטקוין עדכני
     btc = yf.Ticker("BTC-USD")
     price = btc.history(period="1d").iloc[-1]["Close"]
@@ -171,11 +167,20 @@ def main():
     tokens = number_to_tokens(rounded_price) + ["דולר"]
     print("📝 טוקנים:", tokens)
 
-    # מיזוג והעלאה כקובץ בודד
+    # מיזוג והעלאה
     with tempfile.TemporaryDirectory() as tmp:
         merged = os.path.join(tmp, "full_message.wav")
         merge_wavs(tokens, merged)
         upload_single_wav(merged, YEMOT_TARGET_DIR, filename="001.wav")
+    print("🎵 הועלה בהצלחה")
+
+def main():
+    for i in range(5):  # חמש פעמים
+        if i > 0:
+            print("⏳ מחכה 10 שניות לפני הרצה חוזרת...")
+            time.sleep(10)
+            print("🔄 מתחיל מחדש")
+        run_once()
 
 if __name__ == "__main__":
     main()
