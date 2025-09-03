@@ -1,5 +1,4 @@
 import os
-import shutil
 import tempfile
 import requests
 import yfinance as yf
@@ -27,11 +26,6 @@ TEENS = [
 TENS = [
     "","עשר","עשרים","שלושים","ארבעים",
     "חמישים","שישים","שבעים","שמונים","תשעים"
-]
-
-HUNDREDS = [
-    "","מאה","מאתיים","שלוש מאות","ארבע מאות",
-    "חמש מאות","שש מאות","שבע מאות","שמונה מאות","תשע מאות"
 ]
 
 THOUSANDS_SPECIAL = {
@@ -67,11 +61,18 @@ def two_digits_tokens(n: int, with_vav=False):
 def three_digits_tokens(n: int, with_vav=False):
     if n < 100:
         return two_digits_tokens(n, with_vav)
+
     h = n // 100
     rest = n % 100
-    parts = [HUNDREDS[h]]  # אין לך גרסאות עם ו' למאות
+    parts = []
+
+    # במקום טוקן "תשע מאות" -> ["תשע", "מאה"]
+    if h > 0:
+        parts += one_digit_tokens(h) + ["מאה"]
+
     if rest > 0:
         parts += two_digits_tokens(rest, with_vav=True)
+
     return parts
 
 def thousands_tokens(n: int):
@@ -96,7 +97,7 @@ def thousands_tokens(n: int):
 def hundred_thousands_tokens(n: int):
     if n < 100000:
         return thousands_tokens(n)
-    high = n // 1000   # 100–999 אלף
+    high = n // 1000
     rest = n % 1000
     parts = three_digits_tokens(high) + ["אלף"]
     if rest > 0:
@@ -110,12 +111,8 @@ def number_to_tokens(n: int):
         return hundred_thousands_tokens(n)
     raise ValueError("המספר גדול מדי – צריך להרחיב פונקציות")
 
-# ========= מיזוג WAVים + העלאת קובץ אחד =========
+# ========= מיזוג WAVים =========
 def merge_wavs(token_list, out_path):
-    """
-    מקבל רשימת טוקנים ["מאה","אלף","שלושים","ושתיים","דולר"]
-    ממיר לנתיבי WAV, בודק תאימות, וממזג לקובץ WAV יחיד ב-out_path.
-    """
     files = []
     for t in token_list:
         p = os.path.join(AUDIO_DIR, f"{t}.wav")
@@ -130,12 +127,12 @@ def merge_wavs(token_list, out_path):
         framerate  = readers[0].getframerate()
         comptype, compname = readers[0].getcomptype(), readers[0].getcompname()
 
-        # בדיקות תאימות בסיסיות
+        # בדיקות תאימות
         for w in readers[1:]:
-            assert w.getnchannels() == n_channels, "מספר ערוצים לא תואם"
-            assert w.getsampwidth() == sampwidth, "רוחב דגימה לא תואם"
-            assert w.getframerate() == framerate, "תדר דגימה לא תואם"
-            assert w.getcomptype() == comptype, "דחיסה לא תואמת (צריך PCM)"
+            assert w.getnchannels() == n_channels
+            assert w.getsampwidth() == sampwidth
+            assert w.getframerate() == framerate
+            assert w.getcomptype() == comptype
 
         with wave.open(out_path, "wb") as out:
             out.setnchannels(n_channels)
@@ -145,6 +142,7 @@ def merge_wavs(token_list, out_path):
             for w in readers:
                 out.writeframes(w.readframes(w.getnframes()))
 
+# ========= העלאת קובץ בודד =========
 def upload_single_wav(local_wav_path, yemot_target_dir, filename="001.wav"):
     if not yemot_target_dir.endswith("/"):
         yemot_target_dir += "/"
@@ -169,11 +167,11 @@ def main():
 
     print("💰 שער ביטקוין:", rounded_price)
 
-    # בניית הטוקנים (לפי הקבצים שלך) + סיומת "דולר"
+    # בניית הטוקנים
     tokens = number_to_tokens(rounded_price) + ["דולר"]
     print("📝 טוקנים:", tokens)
 
-    # מיזוג כל הקליפים לקובץ אחד והעלאה כ-001.wav
+    # מיזוג והעלאה כקובץ בודד
     with tempfile.TemporaryDirectory() as tmp:
         merged = os.path.join(tmp, "full_message.wav")
         merge_wavs(tokens, merged)
