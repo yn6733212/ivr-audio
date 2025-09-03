@@ -1,278 +1,147 @@
+import os
+import shutil
+import tempfile
 import requests
-from urllib.parse import quote
-from requests_toolbelt.multipart.encoder import MultipartEncoder
+import yfinance as yf
 from datetime import datetime
-import math
+from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 # ========= הגדרות =========
-# ימות
 USERNAME = "0733181201"
 PASSWORD = "6714453"
 TOKEN = f"{USERNAME}:{PASSWORD}"
 YEMOT_UPLOAD_URL = "https://www.call2all.co.il/ym/api/UploadFile"
-YEMOT_TARGET_DIR = "ivr2:/7/"   # שלוחה 7; ודא שיש "/" בסוף
+YEMOT_TARGET_DIR = "ivr2:/7/"  # שלוחה לדוגמה
 
-# מאגר האודיו שלך ב-GitHub (RAW)
-BASE_URL = "https://raw.githubusercontent.com/yn6733212/ivr-audio/main/assets/audio/"
+# ========= אוצר מילים =========
+UNITS = ["אפס","אחד","שתיים","שלוש","ארבע","חמש","שש","שבע","שמונה","תשע"]
 
-# שם קובץ הפתיח אצלך במאגר:
-OPENING_CLIP = "הביטקוין עומד כעת על"  # קובץ בשם "הביטקוין עומד כעת על.wav"
+TEENS = [
+    "עשר","אחד עשרה","שתים עשרה","שלוש עשרה","ארבע עשרה",
+    "חמש עשרה","שש עשרה","שבע עשרה","שמונה עשרה","תשע עשרה"
+]
 
-# ========= עזר: מיפויי שמות =========
-# התאמות לשמות הקבצים שהצגת (כדי לא ליפול על כתיבים שונים)
-ALIASES = {
-    # בסיס
-    "אפס": "אפס",
-    "אחד": "אחד",
-    "שתיים": "שתיים",   # יש לך גם "שתי.wav" – נעדיף "שתיים"
-    "שתי": "שתי",
-    "שלוש": "שלוש",
-    "ארבע": "ארבע",
-    "חמש": "חמש",
-    "שש": "שש",
-    "שבע": "שבע",
-    "שמונה": "שמונה",
-    "תשע": "תישע",      # אצלך הקובץ נקרא "תישע.wav"
-    # ו׳ חיבור ליחידות
-    "ואחד": "ואחד",
-    "ושתיים": "ושתיים",
-    "ושלוש": "ושלוש",
-    "וארבע": "וארבע",
-    "וחמש": "וחמש",
-    "ושש": "ושש",
-    "ושבע": "ושבע",
-    "ושמונה": "ושמונה",
-    "ותשע": "ותישע",     # אצלך: "ותישע.wav"
-    # 10–19
-    "עשר": "עשר",
-    "אחד עשרה": "אחד עשרה",
-    "שתים עשרה": "שתים עשרה",
-    "שלוש עשרה": "שלוש עשרה",
-    "ארבע עשרה": "ארבע עשרה",
-    "חמש עשרה": "חמש עשרה",
-    "שש עשרה": "שש עשרה",
-    "שבע עשרה": "שבע עשרה",
-    "שמונה עשרה": "שמונה עשרה",
-    "תשע עשרה": "תשע עשרה",
-    # ו׳ ל-10–19
-    "ועשר": "ועשר",
-    "ואחד עשרה": "ואחד עשרה",
-    "ושתים עשרה": "ושתים עשרה",
-    "ושלוש עשרה": "ושלוש עשרה",
-    "וארבע עשרה": "וארבע עשרה",
-    "וחמש עשרה": "וחמש עשרה",
-    "ושש עשרה": "ושש עשרה",
-    "ושבע עשרה": "ושבע עשרה",
-    "ושמונה עשרה": "ושמונה עשרה",
-    "ותשע עשרה": "ותשע עשרה",
-    # עשרות
-    "עשרים": "עשרים",
-    "שלושים": "שלושים",
-    "ארבעים": "ארבעים",
-    "חמישים": "חמישים",
-    "שישים": "שישים",
-    "שבעים": "שבעים",
-    "שמונים": "שמונים",
-    "תשעים": "תשעים",
-    # ו׳ לעשרות
-    "ועשרים": "ועשרים",
-    "ושלושים": "ושלושים",   # אצלך זה כתוב עם ו׳ שונה – "ושלושים.wav"
-    "וארבעים": "וארבעים",
-    "וחמישים": "וחמישים",
-    "ושישים": "ושישים",
-    "ושבעים": "ושבעים",
-    "ושמונים": "ושמונים",
-    "ותשעים": "ותשעים",
-    # מאות
-    "מאה": "מאה",
-    "מאתיים": "מאתיים",
-    "שלוש מאות": "שלוש מאות",
-    "ארבע מאות": "ארבע מאות",
-    "חמש מאות": "חמש מאות",
-    "שש מאות": "שש מאות",
-    "שבע מאות": "שבע מאות",
-    "שמונה מאות": "שמונה מאות",
-    # שים לב: "תשע מאות" אין ברשימה שלך – אם תוסיף, תרחיב פה
-    # אלפים
-    "אלף": "אלף",
-    "אלפיים": "אלפיים",
-    "שלושת אלפים": "שלושת אלפים",
-    "ארבעת אלפים": "ארבעת אלפים",
-    "חמשת אלפים": "חמשת אלפים",
-    "ששת אלפים": "ששת אלפים",
-    "שבעת אלפים": "שבעת אלפים",
-    "שמונת אלפים": "שמונת אלפים",
-    "תשעת אלפים": "תשעת אלפים",
-    # מילים כלליות
-    "נקודה": "נקודה",
-    "דולר": "דולר",
-    "אחוז": "אחוז",
-    # פתיח
-    "הביטקוין עומד כעת על": "הביטקוין עומד כעת על",
+TENS = [
+    "","עשר","עשרים","שלושים","ארבעים",
+    "חמישים","שישים","שבעים","שמונים","תשעים"
+]
+
+HUNDREDS = [
+    "","מאה","מאתיים","שלוש מאות","ארבע מאות",
+    "חמש מאות","שש מאות","שבע מאות","שמונה מאות","תשע מאות"
+]
+
+THOUSANDS_SPECIAL = {
+    3: "שלושת",
+    4: "ארבעת",
+    5: "חמשת",
+    6: "ששת",
+    7: "שבעת",
+    8: "שמונת",
+    9: "תשעת"
 }
 
-UNITS = ["אפס","אחד","שתיים","שלוש","ארבע","חמש","שש","שבע","שמונה","תשע"]
-TEENS = ["עשר","אחד עשרה","שתים עשרה","שלוש עשרה","ארבע עשרה","חמש עשרה","שש עשרה","שבע עשרה","שמונה עשרה","תשע עשרה"]
-TENS  = ["","עשר","עשרים","שלושים","ארבעים","חמישים","שישים","שבעים","שמונים","תשעים"]
-HUNDREDS = ["","מאה","מאתיים","שלוש מאות","ארבע מאות","חמש מאות","שש מאות","שבע מאות","שמונה מאות"]  # אין "תשע מאות" אצלך כרגע
+# ========= פונקציות המרה =========
+def one_digit_tokens(n: int):
+    return [UNITS[n]]
 
-def build_raw_url(word: str) -> str:
-    """בונה URL לקובץ במאגר, כולל קידוד שם הקובץ בעברית."""
-    name = ALIASES.get(word, word)
-    return BASE_URL + quote(name + ".wav", safe="/:")
-
-def fetch_clip_bytes(word: str) -> bytes:
-    url = build_raw_url(word)
-    r = requests.get(url)
-    if r.status_code != 200:
-        raise FileNotFoundError(f"לא נמצא קובץ עבור '{word}' ({url})")
-    return r.content
-
-def upload_clip(file_bytes: bytes, target_filename: str):
-    m = MultipartEncoder(fields={
-        "token": TOKEN,
-        "path": YEMOT_TARGET_DIR + target_filename,
-        "file": (target_filename, file_bytes, "audio/wav")
-    })
-    resp = requests.post(YEMOT_UPLOAD_URL, data=m, headers={"Content-Type": m.content_type})
-    if "success" in resp.text.lower():
-        print(f"✅ {target_filename} הועלה בהצלחה ({datetime.now().strftime('%H:%M:%S')})")
-    else:
-        print(f"⚠️ שגיאה בהעלאת {target_filename}: {resp.text}")
-
-# ===== פירוק מספר → מילים (מותאם לקבצים שיש לך) =====
-def two_digits_tokens(n: int, with_leading_vav: bool=False) -> list[str]:
-    """0..99. אם with_leading_vav=True ננסה להשתמש בצורת 'ועשרים/ושתיים' וכו'."""
+def two_digits_tokens(n: int):
     if n < 10:
-        if with_leading_vav and n != 0:
-            vmap = ["", "ואחד","ושתיים","ושלוש","וארבע","וחמש","ושש","ושבע","ושמונה","ותשע"]
-            return [vmap[n]]
-        return [UNITS[n]]
-
+        return one_digit_tokens(n)
     if 10 <= n < 20:
-        teens = TEENS[n-10]
-        if with_leading_vav:
-            return ["ו"+teens]  # יש לך קבצים כמו "ועשר","ואחד עשרה","ועוד..."
-        return [teens]
-
+        return [TEENS[n - 10]]
     tens = n // 10
     ones = n % 10
     if ones == 0:
-        t = TENS[tens]
-        return [("ו"+t) if with_leading_vav else t]
+        return [TENS[tens]]
+    return [TENS[tens], "ו", UNITS[ones]]
 
-    # 21..99: "עשרים ושתיים"
-    tokens = [TENS[tens]]
-    tokens += two_digits_tokens(ones, with_leading_vav=True)  # ליחידה נוסיף ו׳-חיבור
-    if with_leading_vav:
-        tokens[0] = "ו" + tokens[0]  # להפוך "עשרים" ל"ועשרים" כשזה בא עם חיבור מהקודם
-    return tokens
-
-def three_digits_tokens(n: int, with_leading_vav: bool=False) -> list[str]:
-    """0..999. לא נשתמש ב'ומאה/ומאתיים' כי אין לך את הקבצים הללו."""
+def three_digits_tokens(n: int):
     if n < 100:
-        return two_digits_tokens(n, with_leading_vav=with_leading_vav)
-
+        return two_digits_tokens(n)
     h = n // 100
     rest = n % 100
-    parts = [HUNDREDS[h]]
-    if rest == 0:
-        if with_leading_vav:
-            # אין לנו 'ומאה' וכו' – נשאיר בלי ו׳ (יהיה: "... וארבעים | מאה")
-            pass
-        return parts
-
-    # בין מאות לשאר – **נימנע** מו׳ לפני ה"מאות" (אין קליפים כאלה),
-    # אבל כן נוסיף ו׳ לפני החלק שמתחת למאה:
-    parts += two_digits_tokens(rest, with_leading_vav=True)
-    if with_leading_vav:
-        # היינו רוצים 'ו[מאות]' אבל אין קליפ כזה – נשאיר בלי.
-        pass
+    parts = []
+    if h > 0:
+        parts.append(HUNDREDS[h])
+    if rest > 0:
+        parts.append("ו")
+        parts.extend(two_digits_tokens(rest))
     return parts
 
-def thousands_tokens(n: int) -> list[str]:
-    """0..999,999"""
+def thousands_tokens(n: int):
     if n < 1000:
         return three_digits_tokens(n)
-
     thousands = n // 1000
-    below = n % 1000
+    rest = n % 1000
     parts = []
-
     if thousands == 1:
-        parts += ["אלף"]
+        parts.append("אלף")
     elif thousands == 2:
-        parts += ["אלפיים"]
+        parts.append("אלפיים")
     elif 3 <= thousands <= 9:
-        spec = {
-            3: "שלושת אלפים", 4: "ארבעת אלפים", 5: "חמשת אלפים",
-            6: "ששת אלפים", 7: "שבעת אלפים", 8: "שמונת אלפים", 9: "תשעת אלפים"
-        }
-        parts += [spec[thousands]]
+        parts.append(THOUSANDS_SPECIAL[thousands])
+        parts.append("אלפים")
     else:
-        # 10..99 אלף
-        parts += two_digits_tokens(thousands) + ["אלפים"]
-
-    if below > 0:
-        # נעדיף ו׳ לפני מה שמתחת לאלפים, אבל בלי ו׳ לפני מאות (אין קליפ 'ומאה')
-        # לכן: אם below < 100 → נכניס עם ו׳; אם 100..999 → מאות בלי ו׳ ואז השאר עם ו׳
-        if below < 100:
-            parts += two_digits_tokens(below, with_leading_vav=True)
-        else:
-            parts += three_digits_tokens(below)  # מאות בלי ו׳
+        parts.extend(two_digits_tokens(thousands))
+        parts.append("אלפים")
+    if rest > 0:
+        parts.append("ו")
+        parts.extend(three_digits_tokens(rest))
     return parts
 
-def number_to_tokens(n: int) -> list[str]:
-    if n == 0:
-        return ["אפס"]
-    if n < 0:
-        n = abs(n)  # אפשר להוסיף "מינוס" אם תקליט
-    if n >= 1_000_000:
-        # אפשר להרחיב אם תוסיף קליפים לעשרות/מאות אלפים
-        raise ValueError("נכון לעכשיו תומך עד 999,999")
+def number_to_tokens(n: int):
+    if n < 1000:
+        return three_digits_tokens(n)
     return thousands_tokens(n)
 
-# ========= שליפת מחיר הביטקוין =========
-def fetch_btc_usd() -> float:
-    """פשוט ומהיר: CoinGecko API."""
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {"ids":"bitcoin", "vs_currencies":"usd"}
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-    price = float(data["bitcoin"]["usd"])
-    return price
+# ========= פונקציות ימות =========
+def upload_sequence(tokens, yemot_target_dir):
+    """
+    tokens: רשימת מילים [ "מאה","אלף","ושלוש מאות"... ]
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        numbered = []
+        for idx, token in enumerate(tokens, start=1):
+            filename = f"{idx:03}.wav"
+            path = os.path.join("assets/audio", f"{token}.wav")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"לא נמצא קובץ: {path}")
+            dst = os.path.join(tmp, filename)
+            shutil.copy(path, dst)
+            numbered.append(dst)
 
-# ========= מהלך ראשי =========
+        # העלאה לימות
+        for dst in numbered:
+            fname = os.path.basename(dst)
+            with open(dst, "rb") as f:
+                m = MultipartEncoder(fields={
+                    "token": TOKEN,
+                    "path": yemot_target_dir + fname,
+                    "file": (fname, f, "audio/wav")
+                })
+                r = requests.post(YEMOT_UPLOAD_URL, data=m, headers={"Content-Type": m.content_type})
+                if "success" in r.text.lower():
+                    print(f"✅ {fname} הועלה בהצלחה ({datetime.now().strftime('%H:%M:%S')})")
+                else:
+                    print(f"⚠️ שגיאה בהעלאת {fname}: {r.text}")
+
+# ========= שימוש לדוגמה =========
 def main():
-    # 1) פתיח
-    sequence_words = [OPENING_CLIP]
+    # שליפת שער ביטקוין עדכני
+    btc = yf.Ticker("BTC-USD")
+    price = btc.history(period="1d").iloc[-1]["Close"]
+    rounded_price = int(round(price))  # נעגל לשלם
 
-    # 2) מחיר הביטקוין (נעגל לש"ח? לא – כרגע דולר שלם בלבד, אפשר לשנות)
-    price_usd = fetch_btc_usd()
+    print("💰 שער ביטקוין:", rounded_price)
 
-    # אם תרצה עיגול לאלפים: n = round(price_usd, -3)
-    # כאן נעגל לשלם (ללא נקודה). אפשר גם להשמיע עשרוניים אם תרצה.
-    n = int(round(price_usd))
+    # הרכבת טוקנים
+    tokens = ["הביטקוין","עומד","כעת","על"] + number_to_tokens(rounded_price) + ["דולר"]
 
-    # 3) המספר כמילים
-    num_words = number_to_tokens(n)
+    print("📝 טוקנים:", tokens)
 
-    # 4) הוספת "דולר" (אם יש לך הקלטה)
-    sequence_words += num_words + ["דולר"]
-
-    # ====== העלאה לימות כרצף 001..00N ======
-    print("📝 טוקנים:", " | ".join(sequence_words))
-
-    # הורדה והעלאה אחד-אחד לפי אינדקס
-    idx = 1
-    for w in sequence_words:
-        clip_bytes = fetch_clip_bytes(w)
-        fname = f"{idx:03}.wav"
-        upload_clip(clip_bytes, fname)
-        idx += 1
-
-    print("🎉 סיימתי להעלות עד", f"{idx-1:03}.wav")
+    # העלאה לימות
+    upload_sequence(tokens, YEMOT_TARGET_DIR)
 
 if __name__ == "__main__":
     main()
