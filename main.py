@@ -75,6 +75,7 @@ def thousands_tokens(n: int):
     thousands = n // 1000
     rest = n % 1000
     parts = []
+
     if thousands == 1:
         parts.append("אלף")
     elif thousands == 2:
@@ -83,8 +84,24 @@ def thousands_tokens(n: int):
         parts.append(THOUSANDS_SPECIAL[thousands])
         parts.append("אלפים")
     else:
-        parts.extend(two_digits_tokens(thousands))
-        parts.append("אלפים")
+        parts.extend(three_digits_tokens(thousands))
+        parts.append("אלף")
+
+    if rest > 0:
+        parts.append("ו")
+        parts.extend(three_digits_tokens(rest))
+    return parts
+
+def hundred_thousands_tokens(n: int):
+    if n < 100000:
+        return thousands_tokens(n)
+    hundred_thousands = n // 1000  # כל מה שמעל 1000
+    rest = n % 1000
+    parts = []
+
+    parts.extend(three_digits_tokens(hundred_thousands))
+    parts.append("אלף")
+
     if rest > 0:
         parts.append("ו")
         parts.extend(three_digits_tokens(rest))
@@ -93,7 +110,9 @@ def thousands_tokens(n: int):
 def number_to_tokens(n: int):
     if n < 1000:
         return three_digits_tokens(n)
-    return thousands_tokens(n)
+    if n < 1000000:
+        return hundred_thousands_tokens(n)
+    raise ValueError("המספר גדול מדי – צריך להרחיב פונקציות")
 
 # ========= פונקציות ימות =========
 def upload_sequence(tokens, yemot_target_dir):
