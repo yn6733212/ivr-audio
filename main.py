@@ -3,6 +3,8 @@ import shutil
 import tempfile
 import requests
 import yfinance as yf
+import wave
+import contextlib
 from datetime import datetime
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
@@ -12,6 +14,7 @@ PASSWORD = "6714453"
 TOKEN = f"{USERNAME}:{PASSWORD}"
 YEMOT_UPLOAD_URL = "https://www.call2all.co.il/ym/api/UploadFile"
 YEMOT_TARGET_DIR = "ivr2:/7/"  # שלוחה לדוגמה
+AUDIO_DIR = "assets/audio"
 
 # ========= מילים כפי שהקבצים קיימים =========
 UNITS = ["אפס","אחד","שתי","שלוש","ארבע","חמש","שש","שבע","שמונה","תישע"]
@@ -45,36 +48,30 @@ THOUSANDS_SPECIAL = {
 def one_digit_tokens(n: int, with_vav=False):
     word = UNITS[n]
     if with_vav and n > 0:
-        return [f"ו{word}"]  # יש לך קבצים כאלה (ואחד, ושתיים וכו')
+        return [f"ו{word}"]
     return [word]
 
 def two_digits_tokens(n: int, with_vav=False):
     if n < 10:
         return one_digit_tokens(n, with_vav)
     if 10 <= n < 20:
-        word = TEENS[n - 10]
-        return [f"ו{word}"] if with_vav else [word]
+        w = TEENS[n - 10]
+        return [f"ו{w}"] if with_vav else [w]
     tens = n // 10
     ones = n % 10
-    parts = []
     if ones == 0:
-        word = TENS[tens]
-        parts.append(f"ו{word}" if with_vav else word)
-    else:
-        parts.append(TENS[tens])
-        parts.extend(one_digit_tokens(ones, with_vav=True))
-    return parts
+        w = TENS[tens]
+        return [f"ו{w}"] if with_vav else [w]
+    return [TENS[tens]] + one_digit_tokens(ones, with_vav=True)
 
 def three_digits_tokens(n: int, with_vav=False):
     if n < 100:
         return two_digits_tokens(n, with_vav)
     h = n // 100
     rest = n % 100
-    parts = []
-    word = HUNDREDS[h]
-    parts.append(word)  # מאות אין לך עם ו׳
+    parts = [HUNDREDS[h]]  # אין לך גרסאות עם ו' למאות
     if rest > 0:
-        parts.extend(two_digits_tokens(rest, with_vav=True))
+        parts += two_digits_tokens(rest, with_vav=True)
     return parts
 
 def thousands_tokens(n: int):
@@ -90,22 +87,20 @@ def thousands_tokens(n: int):
     elif 3 <= thousands <= 9:
         parts.append(THOUSANDS_SPECIAL[thousands])
     else:
-        parts.extend(three_digits_tokens(thousands))
+        parts += three_digits_tokens(thousands)
         parts.append("אלף")
     if rest > 0:
-        parts.extend(three_digits_tokens(rest, with_vav=True))
+        parts += three_digits_tokens(rest, with_vav=True)
     return parts
 
 def hundred_thousands_tokens(n: int):
     if n < 100000:
         return thousands_tokens(n)
-    hundred_thousands = n // 1000
+    high = n // 1000   # 100–999 אלף
     rest = n % 1000
-    parts = []
-    parts.extend(three_digits_tokens(hundred_thousands))
-    parts.append("אלף")
+    parts = three_digits_tokens(high) + ["אלף"]
     if rest > 0:
-        parts.extend(three_digits_tokens(rest, with_vav=True))
+        parts += three_digits_tokens(rest, with_vav=True)
     return parts
 
 def number_to_tokens(n: int):
@@ -115,53 +110,74 @@ def number_to_tokens(n: int):
         return hundred_thousands_tokens(n)
     raise ValueError("המספר גדול מדי – צריך להרחיב פונקציות")
 
-# ========= פונקציות ימות =========
-def upload_sequence(tokens, yemot_target_dir):
+# ========= מיזוג WAVים + העלאת קובץ אחד =========
+def merge_wavs(token_list, out_path):
     """
-    tokens: רשימת מילים ["מאה","אלף","שלושים"...]
+    מקבל רשימת טוקנים ["מאה","אלף","שלושים","ושתיים","דולר"]
+    ממיר לנתיבי WAV, בודק תאימות, וממזג לקובץ WAV יחיד ב-out_path.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        numbered = []
-        for idx, token in enumerate(tokens, start=1):
-            filename = f"{idx:03}.wav"
-            path = os.path.join("assets/audio", f"{token}.wav")
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"לא נמצא קובץ: {path}")
-            dst = os.path.join(tmp, filename)
-            shutil.copy(path, dst)
-            numbered.append(dst)
+    files = []
+    for t in token_list:
+        p = os.path.join(AUDIO_DIR, f"{t}.wav")
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"לא נמצא קובץ: {p}")
+        files.append(p)
 
-        # העלאה לימות
-        for dst in numbered:
-            fname = os.path.basename(dst)
-            with open(dst, "rb") as f:
-                m = MultipartEncoder(fields={
-                    "token": TOKEN,
-                    "path": yemot_target_dir + fname,
-                    "file": (fname, f, "audio/wav")
-                })
-                r = requests.post(YEMOT_UPLOAD_URL, data=m, headers={"Content-Type": m.content_type})
-                if "success" in r.text.lower():
-                    print(f"✅ {fname} הועלה בהצלחה ({datetime.now().strftime('%H:%M:%S')})")
-                else:
-                    print(f"⚠️ שגיאה בהעלאת {fname}: {r.text}")
+    with contextlib.ExitStack() as stack:
+        readers = [stack.enter_context(wave.open(f, "rb")) for f in files]
+        n_channels = readers[0].getnchannels()
+        sampwidth  = readers[0].getsampwidth()
+        framerate  = readers[0].getframerate()
+        comptype, compname = readers[0].getcomptype(), readers[0].getcompname()
+
+        # בדיקות תאימות בסיסיות
+        for w in readers[1:]:
+            assert w.getnchannels() == n_channels, "מספר ערוצים לא תואם"
+            assert w.getsampwidth() == sampwidth, "רוחב דגימה לא תואם"
+            assert w.getframerate() == framerate, "תדר דגימה לא תואם"
+            assert w.getcomptype() == comptype, "דחיסה לא תואמת (צריך PCM)"
+
+        with wave.open(out_path, "wb") as out:
+            out.setnchannels(n_channels)
+            out.setsampwidth(sampwidth)
+            out.setframerate(framerate)
+            out.setcomptype(comptype, compname)
+            for w in readers:
+                out.writeframes(w.readframes(w.getnframes()))
+
+def upload_single_wav(local_wav_path, yemot_target_dir, filename="001.wav"):
+    if not yemot_target_dir.endswith("/"):
+        yemot_target_dir += "/"
+    with open(local_wav_path, "rb") as f:
+        m = MultipartEncoder(fields={
+            "token": TOKEN,
+            "path": yemot_target_dir + filename,
+            "file": (filename, f, "audio/wav")
+        })
+        r = requests.post(YEMOT_UPLOAD_URL, data=m, headers={"Content-Type": m.content_type})
+        if "success" in r.text.lower():
+            print(f"✅ {filename} הועלה בהצלחה ({datetime.now().strftime('%H:%M:%S')})")
+        else:
+            print(f"⚠️ שגיאה בהעלאת {filename}: {r.text}")
 
 # ========= שימוש לדוגמה =========
 def main():
     # שליפת שער ביטקוין עדכני
     btc = yf.Ticker("BTC-USD")
     price = btc.history(period="1d").iloc[-1]["Close"]
-    rounded_price = int(round(price))  # נעגל לשלם
+    rounded_price = int(round(price))
 
     print("💰 שער ביטקוין:", rounded_price)
 
-    # בניית הטוקנים
+    # בניית הטוקנים (לפי הקבצים שלך) + סיומת "דולר"
     tokens = number_to_tokens(rounded_price) + ["דולר"]
-
     print("📝 טוקנים:", tokens)
 
-    # העלאה לימות
-    upload_sequence(tokens, YEMOT_TARGET_DIR)
+    # מיזוג כל הקליפים לקובץ אחד והעלאה כ-001.wav
+    with tempfile.TemporaryDirectory() as tmp:
+        merged = os.path.join(tmp, "full_message.wav")
+        merge_wavs(tokens, merged)
+        upload_single_wav(merged, YEMOT_TARGET_DIR, filename="001.wav")
 
 if __name__ == "__main__":
     main()
