@@ -1,6 +1,7 @@
 import time
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder
+from datetime import datetime
 
 # פרטי ימות
 USERNAME = "0733181201"
@@ -24,7 +25,10 @@ def upload_to_yemot(file_bytes, target_filename):
         data=m,
         headers={'Content-Type': m.content_type}
     )
-    print(f"סטטוס ({target_filename}):", resp.text)
+    if "success" in resp.text.lower():
+        print(f"✅ {target_filename} הועלה בהצלחה ({datetime.now().strftime('%H:%M:%S')})")
+    else:
+        print(f"⚠️ שגיאה בהעלאת {target_filename}: {resp.text}")
 
 # שליפת הקובץ פעם אחת מה-GitHub
 resp = requests.get(FILE_URL)
