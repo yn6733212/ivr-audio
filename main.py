@@ -14,7 +14,7 @@ YEMOT_UPLOAD_URL = "https://www.call2all.co.il/ym/api/UploadFile"
 YEMOT_TARGET_DIR = "ivr2:/7/"  # שלוחה לדוגמה
 
 # ========= אוצר מילים =========
-UNITS = ["אפס","אחד","שתיים","שלוש","ארבע","חמש","שש","שבע","שמונה","תשע"]
+UNITS = ["אפס","אחד","שתי","שלוש","ארבע","חמש","שש","שבע","שמונה","תישע"]
 
 TEENS = [
     "עשר","אחד עשרה","שתים עשרה","שלוש עשרה","ארבע עשרה",
@@ -32,41 +32,49 @@ HUNDREDS = [
 ]
 
 THOUSANDS_SPECIAL = {
-    3: "שלושת",
-    4: "ארבעת",
-    5: "חמשת",
-    6: "ששת",
-    7: "שבעת",
-    8: "שמונת",
-    9: "תשעת"
+    3: "שלושת אלפים",
+    4: "ארבעת אלפים",
+    5: "חמשת אלפים",
+    6: "ששת אלפים",
+    7: "שבעת אלפים",
+    8: "שמונת אלפים",
+    9: "תשעת אלפים"
 }
 
 # ========= פונקציות המרה =========
-def one_digit_tokens(n: int):
-    return [UNITS[n]]
+def one_digit_tokens(n: int, with_vav=False):
+    word = UNITS[n]
+    if with_vav and n > 0:
+        return [f"ו{word}"]
+    return [word]
 
-def two_digits_tokens(n: int):
+def two_digits_tokens(n: int, with_vav=False):
     if n < 10:
-        return one_digit_tokens(n)
+        return one_digit_tokens(n, with_vav)
     if 10 <= n < 20:
-        return [TEENS[n - 10]]
+        word = TEENS[n - 10]
+        return [f"ו{word}"] if with_vav else [word]
     tens = n // 10
     ones = n % 10
+    parts = []
     if ones == 0:
-        return [TENS[tens]]
-    return [TENS[tens], "ו", UNITS[ones]]
+        word = TENS[tens]
+        parts.append(f"ו{word}" if with_vav else word)
+    else:
+        parts.append(TENS[tens])
+        parts.extend(one_digit_tokens(ones, with_vav=True))
+    return parts
 
-def three_digits_tokens(n: int):
+def three_digits_tokens(n: int, with_vav=False):
     if n < 100:
-        return two_digits_tokens(n)
+        return two_digits_tokens(n, with_vav)
     h = n // 100
     rest = n % 100
     parts = []
-    if h > 0:
-        parts.append(HUNDREDS[h])
+    word = HUNDREDS[h]
+    parts.append(f"ו{word}" if with_vav else word)
     if rest > 0:
-        parts.append("ו")
-        parts.extend(two_digits_tokens(rest))
+        parts.extend(two_digits_tokens(rest, with_vav=True))
     return parts
 
 def thousands_tokens(n: int):
@@ -82,14 +90,12 @@ def thousands_tokens(n: int):
         parts.append("אלפיים")
     elif 3 <= thousands <= 9:
         parts.append(THOUSANDS_SPECIAL[thousands])
-        parts.append("אלפים")
     else:
         parts.extend(three_digits_tokens(thousands))
         parts.append("אלף")
 
     if rest > 0:
-        parts.append("ו")
-        parts.extend(three_digits_tokens(rest))
+        parts.extend(three_digits_tokens(rest, with_vav=True))
     return parts
 
 def hundred_thousands_tokens(n: int):
@@ -98,13 +104,10 @@ def hundred_thousands_tokens(n: int):
     hundred_thousands = n // 1000  # כל מה שמעל 1000
     rest = n % 1000
     parts = []
-
     parts.extend(three_digits_tokens(hundred_thousands))
     parts.append("אלף")
-
     if rest > 0:
-        parts.append("ו")
-        parts.extend(three_digits_tokens(rest))
+        parts.extend(three_digits_tokens(rest, with_vav=True))
     return parts
 
 def number_to_tokens(n: int):
@@ -117,7 +120,7 @@ def number_to_tokens(n: int):
 # ========= פונקציות ימות =========
 def upload_sequence(tokens, yemot_target_dir):
     """
-    tokens: רשימת מילים [ "מאה","אלף","ושלוש מאות"... ]
+    tokens: רשימת מילים ["מאה","אלף","ושלוש מאות"...]
     """
     with tempfile.TemporaryDirectory() as tmp:
         numbered = []
@@ -154,8 +157,8 @@ def main():
 
     print("💰 שער ביטקוין:", rounded_price)
 
-    # הרכבת טוקנים
-    tokens = ["הביטקוין","עומד","כעת","על"] + number_to_tokens(rounded_price) + ["דולר"]
+    # בניית הטוקנים
+    tokens = number_to_tokens(rounded_price) + ["דולר"]
 
     print("📝 טוקנים:", tokens)
 
