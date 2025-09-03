@@ -13,7 +13,7 @@ TOKEN = f"{USERNAME}:{PASSWORD}"
 YEMOT_UPLOAD_URL = "https://www.call2all.co.il/ym/api/UploadFile"
 YEMOT_TARGET_DIR = "ivr2:/7/"  # שלוחה לדוגמה
 
-# ========= אוצר מילים =========
+# ========= מילים כפי שהקבצים קיימים =========
 UNITS = ["אפס","אחד","שתי","שלוש","ארבע","חמש","שש","שבע","שמונה","תישע"]
 
 TEENS = [
@@ -45,7 +45,7 @@ THOUSANDS_SPECIAL = {
 def one_digit_tokens(n: int, with_vav=False):
     word = UNITS[n]
     if with_vav and n > 0:
-        return [f"ו{word}"]
+        return [f"ו{word}"]  # יש לך קבצים כאלה (ואחד, ושתיים וכו')
     return [word]
 
 def two_digits_tokens(n: int, with_vav=False):
@@ -72,7 +72,7 @@ def three_digits_tokens(n: int, with_vav=False):
     rest = n % 100
     parts = []
     word = HUNDREDS[h]
-    parts.append(f"ו{word}" if with_vav else word)
+    parts.append(word)  # מאות אין לך עם ו׳
     if rest > 0:
         parts.extend(two_digits_tokens(rest, with_vav=True))
     return parts
@@ -83,7 +83,6 @@ def thousands_tokens(n: int):
     thousands = n // 1000
     rest = n % 1000
     parts = []
-
     if thousands == 1:
         parts.append("אלף")
     elif thousands == 2:
@@ -93,7 +92,6 @@ def thousands_tokens(n: int):
     else:
         parts.extend(three_digits_tokens(thousands))
         parts.append("אלף")
-
     if rest > 0:
         parts.extend(three_digits_tokens(rest, with_vav=True))
     return parts
@@ -101,7 +99,7 @@ def thousands_tokens(n: int):
 def hundred_thousands_tokens(n: int):
     if n < 100000:
         return thousands_tokens(n)
-    hundred_thousands = n // 1000  # כל מה שמעל 1000
+    hundred_thousands = n // 1000
     rest = n % 1000
     parts = []
     parts.extend(three_digits_tokens(hundred_thousands))
@@ -120,7 +118,7 @@ def number_to_tokens(n: int):
 # ========= פונקציות ימות =========
 def upload_sequence(tokens, yemot_target_dir):
     """
-    tokens: רשימת מילים ["מאה","אלף","ושלוש מאות"...]
+    tokens: רשימת מילים ["מאה","אלף","שלושים"...]
     """
     with tempfile.TemporaryDirectory() as tmp:
         numbered = []
